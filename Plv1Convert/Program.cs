@@ -1,16 +1,25 @@
+using System.Diagnostics;
+
 namespace Plv1Convert;
 
 static class Program
 {
     const string Usage = """
-        plv1-convert - convert Pelco DX-series (PLV1) AVI exports
+        plv1-convert - convert Pelco DX-series (PLV1) AVI exports to MP4
 
         usage: plv1-convert <input.avi> [options]
 
-          -o, --output <file>   output path (default: <input>.m4v)
+          -o, --output <file>   output path (default: <input>_h264.mp4)
+              --crf <n>         H.264 quality, lower is better (default 18)
+              --deblock         smooth the MPEG-4 block edges; alters the
+                                picture, so avoid it for evidentiary copies
+              --es-only         write just the raw .m4v elementary stream
+              --keep-es         keep the .m4v alongside the MP4
+              --ffmpeg <path>   use this ffmpeg instead of searching
           -h, --help            this text
 
-        Writes a rebuilt MPEG-4 elementary stream that standard decoders accept.
+        ffmpeg is needed for the H.264 encode; it is looked for next to the exe
+        and then on PATH.
         """;
 
     static int Main(string[] args)
@@ -31,7 +40,9 @@ static class Program
             return args.Length == 0 ? 1 : 0;
         }
 
-        string? input = null, output = null;
+        string? input = null, output = null, ffmpegPath = null;
+        int crf = 18;
+        bool deblock = false, esOnly = false, keepEs = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -42,6 +53,11 @@ static class Program
             switch (a)
             {
                 case "-o" or "--output": output = Next(a); break;
+                case "--crf": crf = int.Parse(Next(a)); break;
+                case "--ffmpeg": ffmpegPath = Next(a); break;
+                case "--deblock": deblock = true; break;
+                case "--es-only": esOnly = true; break;
+                case "--keep-es": keepEs = true; break;
                 case "-h" or "--help": Console.WriteLine(Usage); return 0;
                 default:
                     if (a.StartsWith('-')) throw new Exception($"unknown option {a}");
@@ -54,7 +70,9 @@ static class Program
         if (input is null) throw new Exception("no input file given");
         if (!File.Exists(input)) throw new Exception($"no such file: {input}");
 
-        output ??= Path.ChangeExtension(Path.GetFullPath(input), ".m4v");
+        output ??= Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(input)) ?? ".",
+            Path.GetFileNameWithoutExtension(input) + "_h264.mp4");
         output = Path.GetFullPath(output);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
@@ -65,7 +83,26 @@ static class Program
         var frames = PelcoAvi.DropOrphans(all, out int dropped);
         Report(frames, dropped);
 
-        File.WriteAllBytes(output, Mpeg4.BuildStream(frames));
+        string es = Path.ChangeExtension(output, ".m4v");
+        File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
+        if (esOnly)
+        {
+            Console.WriteLine($"wrote {es}");
+            return 0;
+        }
+
+        string ffmpeg = ffmpegPath ?? FindFfmpeg()
+            ?? throw new Exception("ffmpeg not found - put it next to the exe, on PATH, " +
+                                   "or pass --ffmpeg <path>");
+        try
+        {
+            Encode(ffmpeg, es, output, crf, deblock);
+        }
+        finally
+        {
+            if (!keepEs && File.Exists(es)) File.Delete(es);
+        }
+
         Console.WriteLine($"wrote {output}");
         return 0;
     }
@@ -83,5 +120,52 @@ static class Program
         foreach (var (at, seconds) in PelcoAvi.Gaps(frames))
             Console.WriteLine($"  gap: {seconds,4}s of nothing recorded after " +
                               $"{DateTimeOffset.FromUnixTimeSeconds(at).ToLocalTime():HH:mm:ss}");
+    }
+
+    static string? FindFfmpeg()
+    {
+        string exe = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
+
+        string beside = Path.Combine(AppContext.BaseDirectory, exe);
+        if (File.Exists(beside)) return beside;
+
+        foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "")
+                 .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                string p = Path.Combine(dir.Trim('"'), exe);
+                if (File.Exists(p)) return p;
+            }
+            catch (ArgumentException) { /* malformed PATH entry */ }
+        }
+        return null;
+    }
+
+    static void Encode(string ffmpeg, string es, string output, int crf, bool deblock)
+    {
+        var filters = new List<string>();
+        if (deblock) filters.Add("pp7=qp=5:mode=medium");
+
+        var psi = new ProcessStartInfo(ffmpeg)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(output)!,
+        };
+        foreach (string arg in new[]
+                 {
+                     "-hide_banner", "-v", "error",
+                     "-r", Mpeg4.Fps.ToString(), "-f", "m4v", "-i", es,
+                     "-c:v", "libx264", "-preset", "slow", "-crf", crf.ToString(),
+                     "-pix_fmt", "yuv420p", "-aspect", "4:3", "-movflags", "+faststart",
+                 })
+            psi.ArgumentList.Add(arg);
+        if (filters.Count > 0) { psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add(string.Join(',', filters)); }
+        psi.ArgumentList.Add("-y");
+        psi.ArgumentList.Add(output);
+
+        using var p = Process.Start(psi) ?? throw new Exception("could not start ffmpeg");
+        p.WaitForExit();
+        if (p.ExitCode != 0) throw new Exception($"ffmpeg failed with exit code {p.ExitCode}");
     }
 }
