@@ -12,7 +12,9 @@ static class Program
 
           -o, --output <file>   output path (default: <input>_h264.mp4)
               --crf <n>         H.264 quality, lower is better (default 18)
-              --timestamp       burn the recording clock into the picture
+              --timestamp       show the recording clock (burned in when ffmpeg
+                                is available, otherwise written as a .ass file
+                                next to the video)
               --deblock         smooth the MPEG-4 block edges; alters the
                                 picture, so avoid it for evidentiary copies
               --es-only         write just the raw .m4v elementary stream
@@ -20,8 +22,8 @@ static class Program
               --ffmpeg <path>   use this ffmpeg instead of searching
           -h, --help            this text
 
-        ffmpeg is needed for the H.264 encode; it is looked for next to the exe
-        and then on PATH.
+        Without ffmpeg the video is written as MPEG-4 Part 2 rather than H.264:
+        playable in VLC and most modern players, but not re-encoded.
         """;
 
     static int Main(string[] args)
@@ -87,9 +89,9 @@ static class Program
         Report(frames, dropped);
 
         string es = Path.ChangeExtension(output, ".m4v");
-        File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
         if (esOnly)
         {
+            File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
             Console.WriteLine($"wrote {es}");
             return 0;
         }
@@ -101,17 +103,29 @@ static class Program
             File.WriteAllText(subs, Subtitles.Build(frames), new UTF8Encoding(false));
         }
 
-        string ffmpeg = ffmpegPath ?? FindFfmpeg()
-            ?? throw new Exception("ffmpeg not found - put it next to the exe, on PATH, " +
-                                   "or pass --ffmpeg <path>");
-        try
+        string? ffmpeg = ffmpegPath ?? FindFfmpeg();
+        if (ffmpeg is null)
         {
-            Encode(ffmpeg, es, output, crf, deblock, subs);
+            Console.WriteLine("ffmpeg not found - writing MPEG-4 Part 2 without re-encoding.");
+            if (deblock) Console.WriteLine("  note: --deblock needs ffmpeg, ignoring it");
+            Mp4Muxer.Write(output, frames);
+            if (subs is not null)
+                Console.WriteLine($"  clock written to {Path.GetFileName(subs)} " +
+                                  "(load it as a subtitle track)");
+            if (keepEs) File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
         }
-        finally
+        else
         {
-            if (!keepEs && File.Exists(es)) File.Delete(es);
-            if (subs is not null && File.Exists(subs)) File.Delete(subs);
+            File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
+            try
+            {
+                Encode(ffmpeg, es, output, crf, deblock, subs);
+            }
+            finally
+            {
+                if (!keepEs && File.Exists(es)) File.Delete(es);
+                if (subs is not null && File.Exists(subs)) File.Delete(subs);
+            }
         }
 
         Console.WriteLine($"wrote {output}");
