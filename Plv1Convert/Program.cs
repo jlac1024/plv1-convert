@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace Plv1Convert;
 
@@ -11,6 +12,7 @@ static class Program
 
           -o, --output <file>   output path (default: <input>_h264.mp4)
               --crf <n>         H.264 quality, lower is better (default 18)
+              --timestamp       burn the recording clock into the picture
               --deblock         smooth the MPEG-4 block edges; alters the
                                 picture, so avoid it for evidentiary copies
               --es-only         write just the raw .m4v elementary stream
@@ -42,7 +44,7 @@ static class Program
 
         string? input = null, output = null, ffmpegPath = null;
         int crf = 18;
-        bool deblock = false, esOnly = false, keepEs = false;
+        bool timestamp = false, deblock = false, esOnly = false, keepEs = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -55,6 +57,7 @@ static class Program
                 case "-o" or "--output": output = Next(a); break;
                 case "--crf": crf = int.Parse(Next(a)); break;
                 case "--ffmpeg": ffmpegPath = Next(a); break;
+                case "--timestamp": timestamp = true; break;
                 case "--deblock": deblock = true; break;
                 case "--es-only": esOnly = true; break;
                 case "--keep-es": keepEs = true; break;
@@ -91,16 +94,24 @@ static class Program
             return 0;
         }
 
+        string? subs = null;
+        if (timestamp)
+        {
+            subs = Path.ChangeExtension(output, ".ass");
+            File.WriteAllText(subs, Subtitles.Build(frames), new UTF8Encoding(false));
+        }
+
         string ffmpeg = ffmpegPath ?? FindFfmpeg()
             ?? throw new Exception("ffmpeg not found - put it next to the exe, on PATH, " +
                                    "or pass --ffmpeg <path>");
         try
         {
-            Encode(ffmpeg, es, output, crf, deblock);
+            Encode(ffmpeg, es, output, crf, deblock, subs);
         }
         finally
         {
             if (!keepEs && File.Exists(es)) File.Delete(es);
+            if (subs is not null && File.Exists(subs)) File.Delete(subs);
         }
 
         Console.WriteLine($"wrote {output}");
@@ -142,10 +153,11 @@ static class Program
         return null;
     }
 
-    static void Encode(string ffmpeg, string es, string output, int crf, bool deblock)
+    static void Encode(string ffmpeg, string es, string output, int crf, bool deblock, string? subs)
     {
         var filters = new List<string>();
         if (deblock) filters.Add("pp7=qp=5:mode=medium");
+        if (subs is not null) filters.Add("subtitles=" + Path.GetFileName(subs));
 
         var psi = new ProcessStartInfo(ffmpeg)
         {
