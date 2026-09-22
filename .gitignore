@@ -1,0 +1,11 @@
+# build output
+bin/
+obj/
+*.exe
+*.pdb
+
+# video: source exports and conversions, kept out of version control
+*.avi
+*.mp4
+*.m4v
+*.ass
