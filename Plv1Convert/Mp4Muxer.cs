@@ -55,33 +55,49 @@ static class Mp4Muxer
         return Box("esds", Zeros(4), es);                         // version + flags
     }
 
-    static byte[] VisualSampleEntry(byte[] vol)
+    /// <summary>
+    /// Pixel aspect that displays the recording at 4:3, the shape these
+    /// cameras frame for whatever pixel grid they sample it onto.
+    /// </summary>
+    static (uint H, uint V) PixelAspect(int width, int height)
     {
+        uint h = (uint)(4 * height), v = (uint)(3 * width);
+        uint a = h, b = v;
+        while (b != 0) (a, b) = (b, a % b);                       // greatest common divisor
+        return a == 0 ? (1, 1) : (h / a, v / a);
+    }
+
+    static byte[] VisualSampleEntry(byte[] vol, int width, int height)
+    {
+        var (sarH, sarV) = PixelAspect(width, height);
         byte[] name = new byte[32];
         name[0] = 0;                                              // empty compressor name
         return Box("mp4v",
             Zeros(6), U16(1),                                     // reserved, data ref index
             Zeros(16),                                            // pre_defined / reserved
-            U16(Mpeg4.Width), U16(Mpeg4.Height),
+            U16((ushort)width), U16((ushort)height),
             U32(0x00480000), U32(0x00480000),                     // 72 dpi
             Zeros(4), U16(1),                                     // reserved, frame count
             name, U16(0x0018), U16(0xFFFF),                       // depth, pre_defined
             Esds(vol),
-            Box("pasp", U32(10), U32(11)));                       // 352x240 -> 4:3
+            Box("pasp", U32(sarH), U32(sarV)));
     }
 
-    public static void Write(string path, List<PelcoFrame> frames)
+    public static void Write(string path, List<PelcoFrame> frames, PelcoVideo video)
     {
-        byte[] vol = Mpeg4.VolHeader();
+        int width = video.Width, height = video.Height;
+        byte[] vol = Mpeg4.VolHeader(width, height);
         var samples = new List<byte[]>(frames.Count);
         foreach (var f in frames) samples.Add(Mpeg4.RebuildVop(f));
 
         uint count = (uint)samples.Count;
-        uint duration = count;                                    // in media timescale
+        uint timeScale = (uint)video.TimeScale;
+        uint frameDuration = (uint)video.FrameDuration;
+        uint duration = count * frameDuration;                    // in media timescale
         const uint MovieScale = 1000;
-        uint movieDuration = duration * MovieScale / Mpeg4.Fps;
+        uint movieDuration = (uint)((ulong)duration * MovieScale / timeScale);
 
-        byte[] stts = Box("stts", Zeros(4), U32(1), U32(count), U32(1));
+        byte[] stts = Box("stts", Zeros(4), U32(1), U32(count), U32(frameDuration));
 
         var keys = new List<byte[]>();
         for (int i = 0; i < samples.Count; i++)
@@ -97,20 +113,22 @@ static class Mp4Muxer
         byte[] ftyp = Box("ftyp",
             "isom"u8.ToArray(), U32(0x200), "isomiso2mp41"u8.ToArray());
 
+        var (sarH, sarV) = PixelAspect(width, height);
+
         // stco needs the mdat payload offset, which depends on the size of moov.
         // Build once with a placeholder to learn that size, then again for real.
         byte[] BuildMoov(uint mdatOffset)
         {
             byte[] stco = Box("stco", Zeros(4), U32(1), U32(mdatOffset));
             byte[] stbl = Box("stbl",
-                Box("stsd", Zeros(4), U32(1), VisualSampleEntry(vol)),
+                Box("stsd", Zeros(4), U32(1), VisualSampleEntry(vol, width, height)),
                 stts, stss, stsc, stsz, stco);
             byte[] minf = Box("minf",
                 Box("vmhd", U32(1), Zeros(8)),
                 Box("dinf", Box("dref", Zeros(4), U32(1), Box("url ", [0, 0, 0, 1]))),
                 stbl);
             byte[] mdia = Box("mdia",
-                Box("mdhd", Zeros(4), U32(0), U32(0), U32(Mpeg4.Fps), U32(duration),
+                Box("mdhd", Zeros(4), U32(0), U32(0), U32(timeScale), U32(duration),
                     U16(0x55C4), U16(0)),                          // language "und"
                 Box("hdlr", Zeros(4), U32(0), "vide"u8.ToArray(), Zeros(12),
                     "VideoHandler\0"u8.ToArray()),
@@ -122,8 +140,8 @@ static class Mp4Muxer
                 U32(0x00010000), U32(0), U32(0),
                 U32(0), U32(0x00010000), U32(0),
                 U32(0), U32(0), U32(0x40000000),                   // unity matrix
-                U32((uint)(Mpeg4.Width * 65536.0 * 10 / 11)),      // display width (4:3)
-                U32(Mpeg4.Height * 65536u));
+                U32((uint)((long)width * 65536 * sarH / sarV)),    // display width
+                U32((uint)height * 65536u));
             byte[] mvhd = Box("mvhd", Zeros(4), U32(0), U32(0), U32(MovieScale),
                 U32(movieDuration), U32(0x00010000), U16(0x0100), Zeros(10),
                 U32(0x00010000), U32(0), U32(0),

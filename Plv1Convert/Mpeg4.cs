@@ -48,12 +48,9 @@ sealed class BitWriter
 /// </summary>
 static class Mpeg4
 {
-    public const int Width = 352;
-    public const int Height = 240;
     public const int TimeResolution = 15;   // vop_time_increment_resolution
-    public const int Fps = 5;
 
-    public static byte[] VolHeader()
+    public static byte[] VolHeader(int width, int height)
     {
         var o = new BitWriter();
         o.U(0x000001B0, 32); o.U(0x03, 8);          // sequence start, Simple @ L3
@@ -71,7 +68,7 @@ static class Mpeg4
         o.U(TimeResolution, 16);
         o.U(1, 1);                                  // marker
         o.U(0, 1);                                  // fixed_vop_rate
-        o.U(1, 1); o.U(Width, 13); o.U(1, 1); o.U(Height, 13); o.U(1, 1);
+        o.U(1, 1); o.U(width, 13); o.U(1, 1); o.U(height, 13); o.U(1, 1);
         o.U(0, 1);                                  // interlaced
         o.U(1, 1);                                  // obmc_disable
         o.U(0, 1);                                  // sprite_enable
@@ -138,10 +135,10 @@ static class Mpeg4
     }
 
     /// <summary>VOL header followed by every frame, as a raw .m4v stream.</summary>
-    public static byte[] BuildStream(List<PelcoFrame> frames)
+    public static byte[] BuildStream(List<PelcoFrame> frames, int width, int height)
     {
         var ms = new MemoryStream();
-        byte[] vol = VolHeader();
+        byte[] vol = VolHeader(width, height);
         ms.Write(vol);
         foreach (var f in frames) ms.Write(RebuildVop(f));
         return ms.ToArray();

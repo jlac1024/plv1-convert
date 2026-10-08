@@ -12,6 +12,7 @@ static class Program
 
           -o, --output <file>   output path (default: <input>_h264.mp4)
               --crf <n>         H.264 quality, lower is better (default 18)
+              --fps <n>         override the detected frame rate
               --timestamp       show the recording clock (burned in when ffmpeg
                                 is available, otherwise written as a .ass file
                                 next to the video)
@@ -46,6 +47,7 @@ static class Program
 
         string? input = null, output = null, ffmpegPath = null;
         int crf = 18;
+        double? fpsOverride = null;
         bool timestamp = false, deblock = false, esOnly = false, keepEs = false;
 
         for (int i = 0; i < args.Length; i++)
@@ -58,6 +60,7 @@ static class Program
             {
                 case "-o" or "--output": output = Next(a); break;
                 case "--crf": crf = int.Parse(Next(a)); break;
+                case "--fps": fpsOverride = double.Parse(Next(a)); break;
                 case "--ffmpeg": ffmpegPath = Next(a); break;
                 case "--timestamp": timestamp = true; break;
                 case "--deblock": deblock = true; break;
@@ -81,17 +84,30 @@ static class Program
         output = Path.GetFullPath(output);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
-        var all = PelcoAvi.ReadFrames(input);
-        if (all.Count == 0) throw new Exception("no video frames found - is this a Pelco PLV1 export?");
-        if (!all.Exists(f => f.IsKey)) throw new Exception("no keyframes found - is this a Pelco PLV1 export?");
+        var video = PelcoAvi.Read(input);
+        if (video.Frames.Count == 0) throw new Exception("no video frames found - is this a Pelco PLV1 export?");
+        if (!video.Frames.Exists(f => f.IsKey)) throw new Exception("no keyframes found - is this a Pelco PLV1 export?");
 
-        var frames = PelcoAvi.DropOrphans(all, out int dropped);
-        Report(frames, dropped);
+        if (fpsOverride is double requested)
+        {
+            if (requested is <= 0 or > 60) throw new Exception("--fps must be between 0 and 60");
+            video = new PelcoVideo
+            {
+                Width = video.Width,
+                Height = video.Height,
+                TimeScale = 10000,
+                FrameDuration = Math.Max(1, (int)Math.Round(10000 / requested)),
+                Frames = video.Frames,
+            };
+        }
+
+        var frames = PelcoAvi.DropOrphans(video.Frames, out int dropped);
+        Report(frames, dropped, video);
 
         string es = Path.ChangeExtension(output, ".m4v");
         if (esOnly)
         {
-            File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
+            File.WriteAllBytes(es, Mpeg4.BuildStream(frames, video.Width, video.Height));
             Console.WriteLine($"wrote {es}");
             return 0;
         }
@@ -100,7 +116,7 @@ static class Program
         if (timestamp)
         {
             subs = Path.ChangeExtension(output, ".ass");
-            File.WriteAllText(subs, Subtitles.Build(frames), new UTF8Encoding(false));
+            File.WriteAllText(subs, Subtitles.Build(frames, video), new UTF8Encoding(false));
         }
 
         string? ffmpeg = ffmpegPath ?? FindFfmpeg();
@@ -108,18 +124,18 @@ static class Program
         {
             Console.WriteLine("ffmpeg not found - writing MPEG-4 Part 2 without re-encoding.");
             if (deblock) Console.WriteLine("  note: --deblock needs ffmpeg, ignoring it");
-            Mp4Muxer.Write(output, frames);
+            Mp4Muxer.Write(output, frames, video);
             if (subs is not null)
                 Console.WriteLine($"  clock written to {Path.GetFileName(subs)} " +
                                   "(load it as a subtitle track)");
-            if (keepEs) File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
+            if (keepEs) File.WriteAllBytes(es, Mpeg4.BuildStream(frames, video.Width, video.Height));
         }
         else
         {
-            File.WriteAllBytes(es, Mpeg4.BuildStream(frames));
+            File.WriteAllBytes(es, Mpeg4.BuildStream(frames, video.Width, video.Height));
             try
             {
-                Encode(ffmpeg, es, output, crf, deblock, subs);
+                Encode(ffmpeg, es, output, crf, deblock, subs, video);
             }
             finally
             {
@@ -132,13 +148,13 @@ static class Program
         return 0;
     }
 
-    static void Report(List<PelcoFrame> frames, int dropped)
+    static void Report(List<PelcoFrame> frames, int dropped, PelcoVideo video)
     {
         var start = DateTimeOffset.FromUnixTimeSeconds(frames[0].Timestamp).ToLocalTime();
         var end = DateTimeOffset.FromUnixTimeSeconds(frames[^1].Timestamp).ToLocalTime();
-        Console.WriteLine($"{frames.Count} frames  {start:yyyy-MM-dd HH:mm:ss} -> " +
-                          $"{end:yyyy-MM-dd HH:mm:ss}  " +
-                          $"({frames.Count / (double)Mpeg4.Fps:F1}s of footage at {Mpeg4.Fps} fps)");
+        Console.WriteLine($"{frames.Count} frames  {video.Width}x{video.Height}  " +
+                          $"{start:yyyy-MM-dd HH:mm:ss} -> {end:yyyy-MM-dd HH:mm:ss}  " +
+                          $"({frames.Count / video.Fps:F1}s of footage at {video.Fps:0.##} fps)");
         if (dropped > 0)
             Console.WriteLine($"  dropped {dropped} frame(s) with no valid reference " +
                               "(start of file / after gaps)");
@@ -167,7 +183,8 @@ static class Program
         return null;
     }
 
-    static void Encode(string ffmpeg, string es, string output, int crf, bool deblock, string? subs)
+    static void Encode(string ffmpeg, string es, string output, int crf, bool deblock,
+                       string? subs, PelcoVideo video)
     {
         var filters = new List<string>();
         if (deblock) filters.Add("pp7=qp=5:mode=medium");
@@ -181,9 +198,10 @@ static class Program
         foreach (string arg in new[]
                  {
                      "-hide_banner", "-v", "error",
-                     "-r", Mpeg4.Fps.ToString(), "-f", "m4v", "-i", es,
+                     "-r", $"{video.TimeScale}/{video.FrameDuration}", "-f", "m4v", "-i", es,
                      "-c:v", "libx264", "-preset", "slow", "-crf", crf.ToString(),
                      "-pix_fmt", "yuv420p", "-aspect", "4:3", "-movflags", "+faststart",
+                     "-fps_mode", "passthrough",
                  })
             psi.ArgumentList.Add(arg);
         if (filters.Count > 0) { psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add(string.Join(',', filters)); }

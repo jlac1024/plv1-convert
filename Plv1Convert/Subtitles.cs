@@ -12,13 +12,14 @@ static class Subtitles
         return $"{h}:{m:00}:{sec:00.00}";
     }
 
-    public static string Build(List<PelcoFrame> frames)
+    public static string Build(List<PelcoFrame> frames, PelcoVideo video)
     {
+        double secondsPerFrame = video.FrameDuration / (double)video.TimeScale;
         var sb = new StringBuilder();
         sb.Append("[Script Info]\n")
           .Append("ScriptType: v4.00+\n")
-          .Append($"PlayResX: {Mpeg4.Width}\n")
-          .Append($"PlayResY: {Mpeg4.Height}\n\n")
+          .Append($"PlayResX: {video.Width}\n")
+          .Append($"PlayResY: {video.Height}\n\n")
           .Append("[V4+ Styles]\n")
           .Append("Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, ")
           .Append("BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, ")
@@ -31,8 +32,9 @@ static class Subtitles
           .Append("MarginV, Effect, Text\n");
 
         // One event per distinct recording second, each running until the next
-        // begins. A recorded second does not always hold exactly Fps frames, so
-        // fixed one-second events would leave gaps and the clock would flicker.
+        // begins. A recorded second does not always hold the same number of
+        // frames, so fixed one-second events would leave gaps and the clock
+        // would flicker.
         var marks = new List<(int Index, uint Ts)>();
         uint? prev = null;
         for (int i = 0; i < frames.Count; i++)
@@ -46,9 +48,9 @@ static class Subtitles
 
         for (int n = 0; n < marks.Count; n++)
         {
-            double start = marks[n].Index / (double)Mpeg4.Fps;
+            double start = marks[n].Index * secondsPerFrame;
             double end = (n + 1 < marks.Count ? marks[n + 1].Index : frames.Count)
-                         / (double)Mpeg4.Fps;
+                         * secondsPerFrame;
             var stamp = DateTimeOffset.FromUnixTimeSeconds(marks[n].Ts).ToLocalTime();
             sb.Append($"Dialogue: 0,{Time(start)},{Time(end)},ts,,0,0,0,,")
               .Append($"{stamp:yyyy-MM-dd HH:mm:ss}\n");
