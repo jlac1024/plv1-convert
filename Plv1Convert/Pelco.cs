@@ -43,7 +43,7 @@ static class PelcoAvi
         for (int i = 0; i < d.Length; i += 4)
         {
             int n = Math.Min(4, d.Length - i);
-            for (int j = 0; j < n; j++) o[i + j] = d[i + n - 1 - j];
+            for (int j = 0; j < n; j++) { o[i + j] = d[i + n - 1 - j]; }
         }
         return o;
     }
@@ -57,7 +57,7 @@ static class PelcoAvi
             string id = System.Text.Encoding.ASCII.GetString(data, i, 4);
             uint size = BitConverter.ToUInt32(data, i + 4);
             int body = i + 8;
-            if (size > int.MaxValue - 16) break;               // corrupt header
+            if (size > int.MaxValue - 16) { break; }           // corrupt header
             if (id is "RIFF" or "LIST")
             {
                 Walk(data, body + 4, (int)Math.Min((long)body + size, end), visit);
@@ -67,7 +67,7 @@ static class PelcoAvi
                 visit(id, body, (int)size);
             }
             long next = (long)body + size + (size & 1);
-            if (next <= i) break;                              // no forward progress
+            if (next <= i) { break; }                          // no forward progress
             i = (int)next;
         }
     }
@@ -101,10 +101,10 @@ static class PelcoAvi
                 return;
             }
 
-            if (id is not ("00dc" or "00db")) return;
+            if (id is not ("00dc" or "00db")) { return; }
             slot++;                                            // padding still occupies a slot
-            if (size <= 4) return;                             // <=4 bytes is padding, no picture
-            if (off + size > data.Length) return;
+            if (size <= 4) { return; }                         // <=4 bytes is padding, no picture
+            if (off + size > data.Length) { return; }
 
             var d = new ReadOnlySpan<byte>(data, off, size);
             uint ts = BitConverter.ToUInt32(data, off + 4);
@@ -113,24 +113,26 @@ static class PelcoAvi
             if (kind == 4)
             {
                 int n = (int)BitConverter.ToUInt32(data, off + 16);
-                if (n <= 0 || 24 + n > size) return;
+                if (n <= 0 || 24 + n > size) { return; }
                 frames.Add(new PelcoFrame(false, ts, d.Slice(24, n).ToArray()));
                 slots.Add(slot);
             }
             else if (kind == 6)
             {
                 int k = IndexOfReversedStartCode(d);
-                if (k < 8) return;
+                if (k < 8) { return; }
                 int n = (int)BitConverter.ToUInt32(Unswap(d.Slice(k - 8, 4)), 0);
                 byte[] body = Unswap(d[(k - 8)..]);
-                if (n <= 0 || 8 + n > body.Length) return;
+                if (n <= 0 || 8 + n > body.Length) { return; }
                 frames.Add(new PelcoFrame(true, ts, body.AsSpan(8, n).ToArray()));
                 slots.Add(slot);
             }
         });
 
         if (width is < 16 or > 4096 || height is < 16 or > 4096)
+        {
             throw new Exception($"implausible frame size in the AVI header ({width}x{height})");
+        }
 
         var (timeScale, frameDuration) = Rate(scale, rate, slots, frames);
         return new PelcoVideo
@@ -162,24 +164,26 @@ static class PelcoAvi
             for (int i = 1; i < slots.Count; i++)
             {
                 int gap = slots[i] - slots[i - 1];
-                if (gap > 0) spacing[gap] = spacing.GetValueOrDefault(gap) + 1;
+                if (gap > 0) { spacing[gap] = spacing.GetValueOrDefault(gap) + 1; }
             }
             int common = 0, seen = 0;
             foreach (var (gap, n) in spacing)
+            {
                 if (n > seen) { common = gap; seen = n; }
+            }
             if (common > 0)
             {
                 long duration = (long)scale * common;
-                if (duration is > 0 and < int.MaxValue) return (rate, (int)duration);
+                if (duration is > 0 and < int.MaxValue) { return (rate, (int)duration); }
             }
         }
 
         // No usable header: fall back to the recorder's own clock, counting how
         // many frames it stamped with each second.
         var perSecond = new Dictionary<uint, int>();
-        foreach (var f in frames) perSecond[f.Timestamp] = perSecond.GetValueOrDefault(f.Timestamp) + 1;
+        foreach (var f in frames) { perSecond[f.Timestamp] = perSecond.GetValueOrDefault(f.Timestamp) + 1; }
         double fps = perSecond.Count > 0 ? frames.Count / (double)perSecond.Count : 0;
-        if (fps is <= 0 or > 60) fps = 7.5;
+        if (fps is <= 0 or > 60) { fps = 7.5; }
         return (10000, Math.Max(1, (int)Math.Round(10000 / fps)));
     }
 
@@ -187,8 +191,12 @@ static class PelcoAvi
     static int IndexOfReversedStartCode(ReadOnlySpan<byte> d)
     {
         for (int i = 0; i + 4 <= d.Length; i++)
+        {
             if (d[i] == 0xB6 && d[i + 1] == 0x01 && d[i + 2] == 0x00 && d[i + 3] == 0x00)
+            {
                 return i;
+            }
+        }
         return -1;
     }
 
@@ -209,7 +217,7 @@ static class PelcoAvi
 
         foreach (var f in frames)
         {
-            if (prev is uint p && f.Timestamp > p + 1) waiting = true;   // recording gap
+            if (prev is uint p && f.Timestamp > p + 1) { waiting = true; } // recording gap
             prev = f.Timestamp;
             if (waiting)
             {
@@ -228,7 +236,7 @@ static class PelcoAvi
         for (int i = 0; i + 1 < frames.Count; i++)
         {
             uint delta = frames[i + 1].Timestamp - frames[i].Timestamp;
-            if (delta > 1) gaps.Add((frames[i].Timestamp, delta));
+            if (delta > 1) { gaps.Add((frames[i].Timestamp, delta)); }
         }
         return gaps;
     }

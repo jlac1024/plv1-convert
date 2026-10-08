@@ -68,15 +68,15 @@ static class Program
                 case "--keep-es": keepEs = true; break;
                 case "-h" or "--help": Console.WriteLine(Usage); return 0;
                 default:
-                    if (a.StartsWith('-')) throw new Exception($"unknown option {a}");
-                    if (input is not null) throw new Exception("more than one input given");
+                    if (a.StartsWith('-')) { throw new Exception($"unknown option {a}"); }
+                    if (input is not null) { throw new Exception("more than one input given"); }
                     input = a;
                     break;
             }
         }
 
-        if (input is null) throw new Exception("no input file given");
-        if (!File.Exists(input)) throw new Exception($"no such file: {input}");
+        if (input is null) { throw new Exception("no input file given"); }
+        if (!File.Exists(input)) { throw new Exception($"no such file: {input}"); }
 
         output ??= Path.Combine(
             Path.GetDirectoryName(Path.GetFullPath(input)) ?? ".",
@@ -85,12 +85,12 @@ static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
         var video = PelcoAvi.Read(input);
-        if (video.Frames.Count == 0) throw new Exception("no video frames found - is this a Pelco PLV1 export?");
-        if (!video.Frames.Exists(f => f.IsKey)) throw new Exception("no keyframes found - is this a Pelco PLV1 export?");
+        if (video.Frames.Count == 0) { throw new Exception("no video frames found - is this a Pelco PLV1 export?"); }
+        if (!video.Frames.Exists(f => f.IsKey)) { throw new Exception("no keyframes found - is this a Pelco PLV1 export?"); }
 
         if (fpsOverride is double requested)
         {
-            if (requested is <= 0 or > 60) throw new Exception("--fps must be between 0 and 60");
+            if (requested is <= 0 or > 60) { throw new Exception("--fps must be between 0 and 60"); }
             video = new PelcoVideo
             {
                 Width = video.Width,
@@ -123,12 +123,14 @@ static class Program
         if (ffmpeg is null)
         {
             Console.WriteLine("ffmpeg not found - writing MPEG-4 Part 2 without re-encoding.");
-            if (deblock) Console.WriteLine("  note: --deblock needs ffmpeg, ignoring it");
+            if (deblock) { Console.WriteLine("  note: --deblock needs ffmpeg, ignoring it"); }
             Mp4Muxer.Write(output, frames, video);
             if (subs is not null)
+            {
                 Console.WriteLine($"  clock written to {Path.GetFileName(subs)} " +
                                   "(load it as a subtitle track)");
-            if (keepEs) File.WriteAllBytes(es, Mpeg4.BuildStream(frames, video.Width, video.Height));
+            }
+            if (keepEs) { File.WriteAllBytes(es, Mpeg4.BuildStream(frames, video.Width, video.Height)); }
         }
         else
         {
@@ -139,8 +141,8 @@ static class Program
             }
             finally
             {
-                if (!keepEs && File.Exists(es)) File.Delete(es);
-                if (subs is not null && File.Exists(subs)) File.Delete(subs);
+                if (!keepEs && File.Exists(es)) { File.Delete(es); }
+                if (subs is not null && File.Exists(subs)) { File.Delete(subs); }
             }
         }
 
@@ -156,11 +158,15 @@ static class Program
                           $"{start:yyyy-MM-dd HH:mm:ss} -> {end:yyyy-MM-dd HH:mm:ss}  " +
                           $"({frames.Count / video.Fps:F1}s of footage at {video.Fps:0.##} fps)");
         if (dropped > 0)
+        {
             Console.WriteLine($"  dropped {dropped} frame(s) with no valid reference " +
                               "(start of file / after gaps)");
+        }
         foreach (var (at, seconds) in PelcoAvi.Gaps(frames))
+        {
             Console.WriteLine($"  gap: {seconds,4}s of nothing recorded after " +
                               $"{DateTimeOffset.FromUnixTimeSeconds(at).ToLocalTime():HH:mm:ss}");
+        }
     }
 
     static string? FindFfmpeg()
@@ -168,7 +174,7 @@ static class Program
         string exe = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
 
         string beside = Path.Combine(AppContext.BaseDirectory, exe);
-        if (File.Exists(beside)) return beside;
+        if (File.Exists(beside)) { return beside; }
 
         foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "")
                  .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
@@ -176,7 +182,7 @@ static class Program
             try
             {
                 string p = Path.Combine(dir.Trim('"'), exe);
-                if (File.Exists(p)) return p;
+                if (File.Exists(p)) { return p; }
             }
             catch (ArgumentException) { /* malformed PATH entry */ }
         }
@@ -187,8 +193,8 @@ static class Program
                        string? subs, PelcoVideo video)
     {
         var filters = new List<string>();
-        if (deblock) filters.Add("pp7=qp=5:mode=medium");
-        if (subs is not null) filters.Add("subtitles=" + Path.GetFileName(subs));
+        if (deblock) { filters.Add("pp7=qp=5:mode=medium"); }
+        if (subs is not null) { filters.Add("subtitles=" + Path.GetFileName(subs)); }
 
         var psi = new ProcessStartInfo(ffmpeg)
         {
@@ -203,13 +209,15 @@ static class Program
                      "-pix_fmt", "yuv420p", "-aspect", "4:3", "-movflags", "+faststart",
                      "-fps_mode", "passthrough",
                  })
+        {
             psi.ArgumentList.Add(arg);
+        }
         if (filters.Count > 0) { psi.ArgumentList.Add("-vf"); psi.ArgumentList.Add(string.Join(',', filters)); }
         psi.ArgumentList.Add("-y");
         psi.ArgumentList.Add(output);
 
         using var p = Process.Start(psi) ?? throw new Exception("could not start ffmpeg");
         p.WaitForExit();
-        if (p.ExitCode != 0) throw new Exception($"ffmpeg failed with exit code {p.ExitCode}");
+        if (p.ExitCode != 0) { throw new Exception($"ffmpeg failed with exit code {p.ExitCode}"); }
     }
 }

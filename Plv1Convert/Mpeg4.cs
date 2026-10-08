@@ -8,7 +8,7 @@ sealed class BitWriter
 
     public void U(long value, int n)
     {
-        for (int i = n - 1; i >= 0; i--) _bits.Add((byte)((value >> i) & 1));
+        for (int i = n - 1; i >= 0; i--) { _bits.Add((byte)((value >> i) & 1)); }
     }
 
     public void Bit(int b) => _bits.Add((byte)(b & 1));
@@ -17,12 +17,12 @@ sealed class BitWriter
     public void Stuff()
     {
         U(0, 1);
-        while (_bits.Count % 8 != 0) U(1, 1);
+        while (_bits.Count % 8 != 0) { U(1, 1); }
     }
 
     public void AppendFrom(byte[] bits, int start)
     {
-        for (int i = start; i < bits.Length; i++) _bits.Add(bits[i]);
+        for (int i = start; i < bits.Length; i++) { _bits.Add(bits[i]); }
     }
 
     public byte[] ToBytes()
@@ -30,7 +30,9 @@ sealed class BitWriter
         int len = (_bits.Count + 7) / 8;
         var o = new byte[len];
         for (int i = 0; i < _bits.Count; i++)
-            if (_bits[i] != 0) o[i >> 3] |= (byte)(0x80 >> (i & 7));
+        {
+            if (_bits[i] != 0) { o[i >> 3] |= (byte)(0x80 >> (i & 7)); }
+        }
         return o;
     }
 }
@@ -86,14 +88,16 @@ static class Mpeg4
     {
         var bits = new byte[(d.Length - offset) * 8];
         for (int i = offset, k = 0; i < d.Length; i++)
-            for (int b = 7; b >= 0; b--) bits[k++] = (byte)((d[i] >> b) & 1);
+        {
+            for (int b = 7; b >= 0; b--) { bits[k++] = (byte)((d[i] >> b) & 1); }
+        }
         return bits;
     }
 
     static int Read(byte[] bits, ref int i, int n)
     {
         int v = 0;
-        for (int k = 0; k < n; k++) v = (v << 1) | bits[i++];
+        for (int k = 0; k < n; k++) { v = (v << 1) | bits[i++]; }
         return v;
     }
 
@@ -103,7 +107,7 @@ static class Mpeg4
         byte[] b = ToBits(f.Vop, 4);       // skip the start code
         int i = 2;                         // past vop_coding_type
 
-        while (b[i] == 1) i++;             // modulo_time_base: run of 1s
+        while (b[i] == 1) { i++; }         // modulo_time_base: run of 1s
         i++;                               // its terminating 0
         i++;                               // marker
         i += 4;                            // vop_time_increment
@@ -111,20 +115,20 @@ static class Mpeg4
         i++;                               // vop_coded
 
         int rounding = 0;
-        if (!f.IsKey) rounding = Read(b, ref i, 1);
+        if (!f.IsKey) { rounding = Read(b, ref i, 1); }
         int dcThr = Read(b, ref i, 3);
         int quant = Read(b, ref i, 6);     // 6 bits wide, not the usual 5
         int fcode = 3;
-        if (!f.IsKey) fcode = Read(b, ref i, 3);
+        if (!f.IsKey) { fcode = Read(b, ref i, 3); }
 
         var o = new BitWriter();
         o.U(f.IsKey ? 0 : 1, 2);                            // coding type
         o.U(0, 1); o.U(1, 1); o.U(0, 4); o.U(1, 1);         // timing + markers
         o.U(1, 1);                                          // vop_coded
-        if (!f.IsKey) o.U(rounding, 1);
+        if (!f.IsKey) { o.U(rounding, 1); }
         o.U(dcThr, 3);
         o.U(Math.Clamp(quant, 1, 31), 5);
-        if (!f.IsKey) o.U(Math.Clamp(fcode, 1, 7), 3);
+        if (!f.IsKey) { o.U(Math.Clamp(fcode, 1, 7), 3); }
         o.AppendFrom(b, i);
 
         byte[] payload = o.ToBytes();
@@ -140,7 +144,7 @@ static class Mpeg4
         var ms = new MemoryStream();
         byte[] vol = VolHeader(width, height);
         ms.Write(vol);
-        foreach (var f in frames) ms.Write(RebuildVop(f));
+        foreach (var f in frames) { ms.Write(RebuildVop(f)); }
         return ms.ToArray();
     }
 }

@@ -15,10 +15,10 @@ static class Mp4Muxer
     static byte[] Box(string type, params byte[][] parts)
     {
         int len = 8;
-        foreach (var p in parts) len += p.Length;
+        foreach (var p in parts) { len += p.Length; }
         var o = new byte[len];
         BinaryPrimitives.WriteInt32BigEndian(o, len);
-        for (int i = 0; i < 4; i++) o[4 + i] = (byte)type[i];
+        for (int i = 0; i < 4; i++) { o[4 + i] = (byte)type[i]; }
         int at = 8;
         foreach (var p in parts) { p.CopyTo(o, at); at += p.Length; }
         return o;
@@ -29,7 +29,7 @@ static class Mp4Muxer
     static byte[] Cat(params byte[][] parts)
     {
         int len = 0;
-        foreach (var p in parts) len += p.Length;
+        foreach (var p in parts) { len += p.Length; }
         var o = new byte[len];
         int at = 0;
         foreach (var p in parts) { p.CopyTo(o, at); at += p.Length; }
@@ -63,7 +63,7 @@ static class Mp4Muxer
     {
         uint h = (uint)(4 * height), v = (uint)(3 * width);
         uint a = h, b = v;
-        while (b != 0) (a, b) = (b, a % b);                       // greatest common divisor
+        while (b != 0) { (a, b) = (b, a % b); }                   // greatest common divisor
         return a == 0 ? (1, 1) : (h / a, v / a);
     }
 
@@ -88,7 +88,7 @@ static class Mp4Muxer
         int width = video.Width, height = video.Height;
         byte[] vol = Mpeg4.VolHeader(width, height);
         var samples = new List<byte[]>(frames.Count);
-        foreach (var f in frames) samples.Add(Mpeg4.RebuildVop(f));
+        foreach (var f in frames) { samples.Add(Mpeg4.RebuildVop(f)); }
 
         uint count = (uint)samples.Count;
         uint timeScale = (uint)video.TimeScale;
@@ -101,13 +101,15 @@ static class Mp4Muxer
 
         var keys = new List<byte[]>();
         for (int i = 0; i < samples.Count; i++)
-            if (frames[i].IsKey) keys.Add(U32((uint)(i + 1)));     // 1-based
+        {
+            if (frames[i].IsKey) { keys.Add(U32((uint)(i + 1))); } // 1-based
+        }
         byte[] stss = Box("stss", Zeros(4), U32((uint)keys.Count), Cat([.. keys]));
 
         byte[] stsc = Box("stsc", Zeros(4), U32(1), U32(1), U32(count), U32(1));
 
         var sizes = new List<byte[]>(samples.Count);
-        foreach (var s in samples) sizes.Add(U32((uint)s.Length));
+        foreach (var s in samples) { sizes.Add(U32((uint)s.Length)); }
         byte[] stsz = Box("stsz", Zeros(4), U32(0), U32(count), Cat([.. sizes]));
 
         byte[] ftyp = Box("ftyp",
@@ -160,9 +162,9 @@ static class Mp4Muxer
         fs.Write(moov);
 
         int payload = 0;
-        foreach (var s in samples) payload += s.Length;
+        foreach (var s in samples) { payload += s.Length; }
         fs.Write(U32((uint)(payload + 8)));
         fs.Write("mdat"u8);
-        foreach (var s in samples) fs.Write(s);
+        foreach (var s in samples) { fs.Write(s); }
     }
 }
